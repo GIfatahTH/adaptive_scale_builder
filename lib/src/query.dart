@@ -28,15 +28,10 @@ class Query {
     if (!isLinear) {
       final s = step == double.infinity ? 420 : step;
       final r = (q.w0 ?? s) * scale;
-      // print('r linear = $r');
       return r;
     }
-    // print('scale = $scale');
-    // print('width = $width');
-    // print('q.w0 = ${q.w0}');
-    // print('q.y0 = ${q.y0}');
+
     final r = scale * (width - (q.y0 ?? 0)) + (q.w0 ?? 0);
-    // print('r = $r');
     return r;
   }
 

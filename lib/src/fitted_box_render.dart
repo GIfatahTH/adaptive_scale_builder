@@ -3,27 +3,28 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 
-import 'resizer.dart';
+import '../adaptive_scale_builder.dart';
 
 class MyFittedBox extends SingleChildRenderObjectWidget {
   const MyFittedBox({
-    required this.width,
-    required this.height,
-    this.inheritedFraction = 1.0,
+    this.scale,
     required this.fitTheShortestSide,
     this.respectAspectRation = true,
+    this.ignoreGlobalResizing = false,
     super.key,
     super.child,
   });
-  final double? width, height, inheritedFraction;
-
-  final bool fitTheShortestSide, respectAspectRation;
+  final double? scale;
+  final bool fitTheShortestSide, respectAspectRation, ignoreGlobalResizing;
   @override
   MyRenderFittedBox createRenderObject(BuildContext context) {
+    final fraction =
+        AdaptiveSettings.of(context).maxWidth / AdaptiveSettings.baseWidth;
+
     return MyRenderFittedBox(
-      width: width,
-      height: height,
-      inheritedFraction: inheritedFraction,
+      inheritedFraction: scale == null
+          ? 1 / fraction
+          : scale! * (ignoreGlobalResizing ? 1 : fraction),
       fitTheShortestSide: fitTheShortestSide,
       respectAspectRation: respectAspectRation,
     );
@@ -32,11 +33,13 @@ class MyFittedBox extends SingleChildRenderObjectWidget {
   @override
   void updateRenderObject(
       BuildContext context, MyRenderFittedBox renderObject) {
+    final fraction =
+        AdaptiveSettings.of(context).maxWidth / AdaptiveSettings.baseWidth;
     renderObject
-      ..width = width
-      ..height = height
       ..fitTheShortestSide = fitTheShortestSide
-      ..inheritedFraction = inheritedFraction
+      ..inheritedFraction = scale == null
+          ? 1 / fraction
+          : scale! * (ignoreGlobalResizing ? 1 : fraction)
       ..respectAspectRation = respectAspectRation;
   }
 
@@ -48,8 +51,6 @@ class MyFittedBox extends SingleChildRenderObjectWidget {
 
 class MyRenderFittedBox extends MyRenderFittedBoxBase {
   MyRenderFittedBox({
-    required super.width,
-    required super.height,
     required super.fitTheShortestSide,
     required super.inheritedFraction,
     required bool respectAspectRation,
@@ -65,254 +66,135 @@ class MyRenderFittedBox extends MyRenderFittedBoxBase {
     markNeedsLayout();
   }
 
-  Size? baseChildSize;
   Constraints? cachedConstraints;
-
-  @override
-  set child(RenderBox? value) {
-    baseChildSize = null;
-    _clearPaintData();
-    super.child = value;
-  }
 
   Size _layout(
     BoxConstraints c,
-    bool parentUsesSize, [
+    bool parentUsesSize, {
     bool compareWithAdaptiveWidth = true,
-  ]) {
+  }) {
     if (!c.isNormalized) {
+      // Non normalized constraint, are not normalized in the width dimension.
       c = c.copyWith(maxWidth: constraints.constrainWidth(c.maxWidth));
       assert(c.isNormalized);
     }
     if (baseChildSize == null || !compareWithAdaptiveWidth) {
+      // baseChildSize caches the size of the child for performance consideration
       if (baseChildSize == null) {
-        print('====== created =====');
+        print('====== created: scale: $_scaleSize =====');
       } else {
-        print('====== cached =====');
+        print('====== cached scale: $_scaleSize =====');
       }
       child!.layout(
         c,
         parentUsesSize: parentUsesSize,
       );
     }
+    // The adaptive width is the width of the child times the inherited fraction
     final adaptiveWidth = child!.size.width * _inheritedFraction!;
-    final size = Size(
-      min(adaptiveWidth, c.maxWidth),
-      min(adaptiveWidth / child!.size.aspectRatio, c.maxHeight),
+    final adaptiveSize = Size(
+      adaptiveWidth,
+      adaptiveWidth / child!.size.aspectRatio,
+      // min(adaptiveWidth / child!.size.aspectRatio, c.maxHeight),
     );
     if (!compareWithAdaptiveWidth) {
-      return size;
+      return adaptiveSize;
     }
+    // caching the child size
     baseChildSize ??= child!.size;
 
-    if (baseChildSize!.width == c.maxWidth) {
-      final widthScale = baseChildSize!.height / size.height;
+    if (baseChildSize!.width == c.maxWidth ||
+        baseChildSize!.height == c.maxHeight) {
+      // if child width equals the max constrained width (child takes the max
+      // available width), we try to relayout the child with adaptive constraints
+      final widthScale = baseChildSize!.height / adaptiveSize.height;
       final constrainedSize = _layout(
-        constraints.copyWith(maxWidth: constraints.maxWidth * widthScale),
+        constraints.copyWith(
+          maxWidth: (constraints.maxWidth * widthScale).roundToDouble(),
+          maxHeight: (constraints.maxHeight * widthScale).roundToDouble(),
+          minWidth: constraints.hasTightWidth
+              ? (constraints.maxWidth * widthScale).roundToDouble()
+              : null,
+          minHeight: constraints.hasTightHeight
+              ? (constraints.maxHeight * widthScale).roundToDouble()
+              : null,
+        ),
         parentUsesSize,
-        false,
+        compareWithAdaptiveWidth: false,
       );
-
-      scaleSize = getScaleSize(
+      //
+      _scaleSize ??= getScaleSize(
         child!.size,
         Size(constraints.maxWidth, constrainedSize.height),
       );
       return Size(
-        child!.size.width * scaleSize.width,
-        child!.size.height * scaleSize.height,
+        child!.size.width * _scaleSize!.width,
+        child!.size.height * _scaleSize!.height,
       );
     }
-    scaleSize = getScaleSize(child!.size, size);
+    _scaleSize ??= getScaleSize(child!.size, adaptiveSize);
     baseChildSize = null;
-    return Size(child!.size.width * scaleSize.width,
-        child!.size.height * scaleSize.height);
+    return Size(child!.size.width * _scaleSize!.width,
+        child!.size.height * _scaleSize!.height);
+  }
+
+  BoxConstraints _setUpConstraints() {
+    if (cachedConstraints != constraints) {
+      _clearPaintData();
+      cachedConstraints = constraints;
+    }
+    final r = constraints.maxWidth;
+    final maxWidth = _fitTheShortestSide || r > AdaptiveSettings.baseWidth
+        ? AdaptiveSettings.baseWidth
+        : min(AdaptiveSettings.baseWidth, constraints.maxWidth) /
+            _inheritedFraction!;
+
+    return constraints.copyWith(
+      maxWidth: maxWidth,
+    );
   }
 
   @override
   void performLayout() {
-    if (cachedConstraints != constraints) {
-      baseChildSize = null;
-      _clearPaintData();
-      cachedConstraints = constraints;
-    }
-
-    final maxWidth = Resize.adaptiveWidth
-        // +
-        //     0 *
-        //         min(Resize.adaptiveWidth, constraints.maxWidth) /
-        //         _inheritedFraction!
-        ;
-    final c = constraints.copyWith(
-      maxWidth: maxWidth,
-    );
+    final c = _setUpConstraints();
     final s = _layout(c, true);
-    size = s;
-    // size = constraints.constrain(s);
+
+    size = constraints.constrain(s);
   }
 
   @override
   Size computeDryLayout(BoxConstraints constraints) {
-    if (cachedConstraints != constraints) {
-      baseChildSize = null;
-      cachedConstraints = constraints;
-    }
-    final maxWidth =
-        min(Resize.adaptiveWidth, constraints.maxWidth) / _inheritedFraction!;
-    final c = constraints.copyWith(
-      maxWidth: maxWidth,
-    );
+    final c = _setUpConstraints();
     final s = _layout(c, false);
     return constraints.constrain(s);
   }
 
   Size getScaleSize(Size source, Size destination) {
-    destination = constraints.constrain(destination);
+    if (_fitTheShortestSide) {
+      destination = constraints.constrain(destination);
+    }
     final FittedSizes sizes = applyBoxFit(BoxFit.contain, source, destination);
     final double scaleX = sizes.destination.width / sizes.source.width;
     final double scaleY = sizes.destination.height / sizes.source.height;
     return Size(scaleX, scaleY);
   }
-
-//   @override
-//   void performLayout() {
-//     assert(child != null);
-
-//     final maxWidth = _inheritedFraction != null
-//         ? Resize.adaptiveWidth
-//         : this.constraints.maxWidth;
-
-//     final loosenConstraints = BoxConstraints(
-//       maxWidth: maxWidth,
-//       maxHeight: this.constraints.maxHeight,
-//     );
-//     Size childSize;
-//     if (cachedChildSize != null &&
-//         cachedLoosenConstraints?.maxHeight == loosenConstraints.maxHeight) {
-//       print('****CachedChildSize****');
-//       childSize = cachedChildSize!;
-//     } else {
-//       print('************CREATE LaYOUT*************');
-
-//       cachedLoosenConstraints = loosenConstraints;
-
-//       child!.layout(cachedLoosenConstraints!, parentUsesSize: true);
-//       childSize = child!.size;
-//       cachedChildSize = childSize;
-//     }
-
-//     final constraints = this.constraints.loosen();
-//     constrainedSize = childSize.isFinite && !childSize.isEmpty
-//         ? constraints.constrainSizeAndAttemptToPreserveAspectRatio(childSize)
-//         : null;
-//     if (childSize.width == maxWidth) {
-//       constrainedSize = childSize.height == constraints.maxHeight
-//           ? childSize
-//           : !_respectAspectRation && childSize.width > constraints.maxWidth
-//               ? constraints.constrain(Size(
-//                   (_inheritedFraction ?? 1) * Resize.adaptiveWidth,
-//                   childSize.height * (_inheritedFraction ?? 1) * (_width ?? 1),
-//                 ))
-//               : constraints.constrainSizeAndAttemptToPreserveAspectRatio(
-//                   Size(
-//                     constraints.maxWidth,
-//                     constrainedSize!.height *
-//                         (_inheritedFraction ?? 1) *
-//                         (_width ?? 1),
-//                   ),
-//                 );
-
-//       constrainedSize = constraints.constrain(constrainedSize!);
-
-//       final double scaleY = constrainedSize!.height / childSize.height;
-
-//       child!.layout(
-//         loosenConstraints.copyWith(
-//           maxWidth: constrainedSize!.width / (scaleY > 0 ? scaleY : 1),
-//           maxHeight: constrainedSize!.height / (scaleY > 0 ? scaleY : 1),
-//         ),
-//         parentUsesSize: true,
-//       );
-//       childSize = child!.size;
-
-//       _boxFit1 = BoxFit.cover;
-
-//       constrainedSize = constrainedSize!;
-//     } else {
-//       constrainedSize =
-//           constraints.constrainSizeAndAttemptToPreserveAspectRatio(
-//         Size(
-//           constrainedSize!.width * (_inheritedFraction ?? 1) * (_width ?? 1),
-//           constrainedSize!.height * (_inheritedFraction ?? 1) * (_width ?? 1),
-//         ),
-//       );
-//       if (constrainedSize!.width == constraints.maxWidth) {
-//         if (childSize.width > constraints.maxWidth) {
-//           // child!.layout(
-//           //     cachedLoosenConstraints!.copyWith(maxWidth: constraints.maxWidth),
-//           //     parentUsesSize: true);
-//           // childSize = child!.size;
-//           // constrainedSize = constraints.constrain(childSize);
-//           cachedChildSize = null;
-//         } else {
-//           // child!.layout(
-//           //             cachedLoosenConstraints!.copyWith(maxWidth: constraints.maxWidth),
-//           //             parentUsesSize: true);
-//           //         childSize = child!.size;
-//           //         constrainedSize = constraints.constrain(childSize);
-
-//           cachedChildSize = null;
-//         }
-//       } else {
-//         cachedChildSize = null;
-//       }
-
-//       _boxFit1 = BoxFit.cover;
-//       // cachedChildSize = null;
-//     }
-
-//     size = constrainedSize!;
-//     _clearPaintData();
-//   }
 }
 
 class MyRenderFittedBoxBase extends RenderProxyBox {
   MyRenderFittedBoxBase({
-    required double? width,
-    required double? height,
     required bool fitTheShortestSide,
     required double? inheritedFraction,
-  })  : _width = width,
-        _height = height,
-        _fitTheShortestSide = fitTheShortestSide,
+  })  : _fitTheShortestSide = fitTheShortestSide,
         _inheritedFraction = inheritedFraction;
-
-  double? _width;
-  set width(double? value) {
-    if (value == _width) {
-      return;
-    }
-    _width = value;
-    // _transform = null;
-    markNeedsLayout();
-  }
-
-  double? _height;
-  set height(double? value) {
-    if (value == _height) {
-      return;
-    }
-    _height = value;
-
-    markNeedsLayout();
-  }
 
   double? _inheritedFraction;
   set inheritedFraction(double? value) {
     if (value == _inheritedFraction) {
       return;
     }
+    print(value);
     _inheritedFraction = value;
-    _transform = null;
+    _clearPaintData();
     markNeedsLayout();
   }
 
@@ -322,44 +204,41 @@ class MyRenderFittedBoxBase extends RenderProxyBox {
       return;
     }
     _fitTheShortestSide = value;
-
+    _clearPaintData();
     markNeedsLayout();
   }
 
-  // Size? constrainedSize;
-  Size scaleSize = const Size(1, 1);
-  // bool? _hasVisualOverflow = false;
+  Size? baseChildSize;
+  Size? _scaleSize;
   Matrix4? _transform;
 
+  @override
+  set child(RenderBox? value) {
+    _clearPaintData();
+    super.child = value;
+  }
+
+  @override
+  void reassemble() {
+    // _clearPaintData();
+    baseChildSize = null;
+    super.reassemble();
+  }
+
   void _clearPaintData() {
-    // _hasVisualOverflow = false;
+    baseChildSize = null;
     _transform = null;
+    _scaleSize = null;
   }
 
   void _updatePaintData() {
     if (_transform != null) {
       return;
     }
+    assert(_scaleSize != null);
     _transform = Matrix4.identity()
-      ..scale(scaleSize.width, scaleSize.height, 1.0);
+      ..scale(_scaleSize!.width, _scaleSize!.height, 1.0);
     assert(_transform!.storage.every((double value) => value.isFinite));
-  }
-
-  TransformLayer? _paintChildWithTransform(
-      PaintingContext context, Offset offset) {
-    final Offset? childOffset = MatrixUtils.getAsTranslation(_transform!);
-    if (childOffset == null) {
-      return context.pushTransform(
-        needsCompositing,
-        offset,
-        _transform!,
-        super.paint,
-        oldLayer: layer is TransformLayer ? layer! as TransformLayer : null,
-      );
-    } else {
-      super.paint(context, offset + childOffset);
-    }
-    return null;
   }
 
   @override

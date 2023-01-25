@@ -1,8 +1,16 @@
 library adaptive_scale_builder;
 
-export 'src/inherited_layout.dart' show InheritedLayout;
-export 'src/inherited_size.dart' show InheritedSize;
+export 'src/adaptive_settings.dart' show AdaptiveSettings;
 export 'src/query.dart' show Query;
-export 'src/scaffold_inherited_layout.dart' show ScaffoldInheritedLayout;
-export 'src/resizer.dart' show Resize, WidgetX;
-// export 'src/flex_spacer.dart' show FlexSpacer;
+export 'src/adaptive_layout.dart' show AdaptiveLayout;
+export 'src/extension.dart'
+    show
+        WidgetX,
+        DoubleX,
+        IntX,
+        TextStyleX,
+        RadiusX,
+        BorderRadiusX,
+        EdgeInsetsGeometryX,
+        AppBarX;
+export 'src/sized_spacer.dart' show SizedSpacer;

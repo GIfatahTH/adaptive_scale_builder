@@ -1,11 +1,8 @@
 import 'dart:io';
-import 'dart:math';
-import 'dart:ui';
 
 import 'package:adaptive_scale_builder/adaptive_scale_builder.dart';
 
 import 'fitted_box_render.dart';
-import 'extension.dart';
 import 'package:flutter/material.dart';
 
 class AdaptiveLayout extends StatelessWidget {

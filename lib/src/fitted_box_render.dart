@@ -81,9 +81,9 @@ class MyRenderFittedBox extends MyRenderFittedBoxBase {
     if (baseChildSize == null || !compareWithAdaptiveWidth) {
       // baseChildSize caches the size of the child for performance consideration
       if (baseChildSize == null) {
-        print('====== created: scale: $_scaleSize =====');
+        // print('====== created: scale: $_scaleSize =====');
       } else {
-        print('====== cached scale: $_scaleSize =====');
+        // print('====== cached scale: $_scaleSize =====');
       }
       child!.layout(
         c,
@@ -192,7 +192,6 @@ class MyRenderFittedBoxBase extends RenderProxyBox {
     if (value == _inheritedFraction) {
       return;
     }
-    print(value);
     _inheritedFraction = value;
     _clearPaintData();
     markNeedsLayout();
